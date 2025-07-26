@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio # Import the asyncio library for delays
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler, CallbackQueryHandler, CallbackContext
 
@@ -73,7 +74,7 @@ async def show_payment_options(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("📦 50 Holders (0.5 SOL)", callback_data='option_1')],
         [InlineKeyboardButton("🚀 400 Holders (1.8 SOL)", callback_data='option_2')],
         [InlineKeyboardButton("🌟 700 Holders (3.0 SOL)", callback_data='option_3')],
-        [InlineKeyboardButton("🔥 1000 Holders (3.8 SOL)", callback_data='option_4')],
+        [InlineKeyboardButton("� 1000 Holders (3.8 SOL)", callback_data='option_4')],
         [InlineKeyboardButton("💎 DexScreener/Pump.fun Feature (6.0 SOL)", callback_data='option_5')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -147,18 +148,32 @@ async def prompt_for_screenshot(update: Update, context: CallbackContext) -> int
 
 async def handle_screenshot(update: Update, context: CallbackContext) -> int:
     """
-    Handles the uploaded screenshot. In a real bot, this would process the image.
-    For now, it just confirms receipt and ends the conversation.
+    Handles the uploaded screenshot, simulates a verification process with delays,
+    and confirms the payment.
     """
-    photo = update.message.photo[-1] # Get the largest available photo
-    # Here you would add your AI logic to scan the screenshot.
-    # For this example, we'll just confirm we received it.
+    photo = update.message.photo[-1]  # Get the largest available photo
     logger.info(f"Screenshot received from {update.effective_user.first_name}. File ID: {photo.file_id}")
 
+    # 1. Initial confirmation message
     await update.message.reply_text(
         "✅ Thank you! We have received your screenshot.\n\n"
-        "Your payment is being verified. This usually takes just a few moments.\n\n"
-        "We will notify you once the process is complete. You can start a new request by sending /start."
+        "Your payment is being verified. This usually takes just a few moments."
+    )
+
+    # 2. Add a 10-second delay
+    await asyncio.sleep(10)
+
+    # 3. Send scanning message
+    await update.message.reply_text("⏳ Our AI is scanning your payment...")
+
+    # 4. Add a 4-second delay
+    await asyncio.sleep(4)
+
+    # 5. Send final confirmation
+    await update.message.reply_text(
+        "🎉 Payment received!\n\n"
+        "Your holder increase is now being processed. We will notify you upon completion.\n\n"
+        "You can start a new request by sending /start."
     )
 
     # End the current conversation
@@ -206,3 +221,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+�
