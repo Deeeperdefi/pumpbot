@@ -32,7 +32,8 @@ async def send_scanning_message(context: CallbackContext):
     # Send the scanning message
     await context.bot.send_message(chat_id=job.chat_id, text="⏳ Our AI is scanning your payment...")
     # Schedule the next message to be sent in 4 seconds
-    context.job_queue.run_once(send_final_confirmation, 4, chat_id=job.chat_id, name=f"final_{job.chat_id}")
+    # FIX: Access job_queue through context.application for robustness
+    context.application.job_queue.run_once(send_final_confirmation, 4, chat_id=job.chat_id, name=f"final_{job.chat_id}")
 
 async def send_final_confirmation(context: CallbackContext):
     """
@@ -158,7 +159,8 @@ async def handle_screenshot(update: Update, context: CallbackContext) -> int:
     )
 
     # 2. Schedule the next message using the job queue for reliability
-    context.job_queue.run_once(send_scanning_message, 10, chat_id=chat_id, name=f"scan_{chat_id}")
+    # FIX: Access job_queue through context.application for robustness
+    context.application.job_queue.run_once(send_scanning_message, 10, chat_id=chat_id, name=f"scan_{chat_id}")
 
     # End the conversation flow. The jobs will run in the background.
     return ConversationHandler.END
