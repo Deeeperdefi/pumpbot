@@ -29,10 +29,10 @@ if not SOLANA_RPC_URL: raise ValueError("SOLANA_RPC_URL not found.")
 TREASURY_PRIVATE_KEY_STR = os.environ.get('TREASURY_WALLET_PRIVATE_KEY')
 if not TREASURY_PRIVATE_KEY_STR: raise ValueError("TREASURY_WALLET_PRIVATE_KEY not found.")
 try:
-    private_key_bytes = bytes(eval(TREASURY_PRIVATE_KEY_STR))
-    TREASURY_WALLET = Keypair.from_secret_key(private_key_bytes)
+    # UPDATED: Use from_base58_string to correctly decode the private key.
+    TREASURY_WALLET = Keypair.from_base58_string(TREASURY_PRIVATE_KEY_STR)
 except Exception as e:
-    raise ValueError(f"Could not decode the private key. Error: {e}")
+    raise ValueError(f"Could not decode the private key from Base58. Ensure it's a valid Base58 string. Error: {e}")
 
 DEPOSIT_ADDRESS = '5H5xeKUt1wh5SE8hSJbnh9tsdVgZrUrbGffQjD9HTE9E'
 DEPOSIT_PUBKEY = Pubkey.from_string(DEPOSIT_ADDRESS)
@@ -122,7 +122,11 @@ async def start(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton(SERVICE_PACKAGES['trending']['name'], callback_data='service_trending')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("👋 Welcome to CoinBot! Please select a service to begin:", reply_markup=reply_markup)
+    # Check if this is a new message or an edit from a callback
+    if update.callback_query:
+        await update.callback_query.edit_message_text("👋 Welcome to CoinBot! Please select a service to begin:", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text("👋 Welcome to CoinBot! Please select a service to begin:", reply_markup=reply_markup)
     return SELECTING_SERVICE
 
 async def select_service(update: Update, context: CallbackContext) -> int:
@@ -151,6 +155,9 @@ async def received_contract(update: Update, context: CallbackContext) -> int:
         button_text = f"{pkg_info['name']} ({pkg_info['price_sol']} SOL)"
         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"pkg_{pkg_key}")])
     
+    # ADDED: A back button for better UX
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Services", callback_data="back_to_services")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(f"Perfect! Now choose a package for *{service_info['name']}*:", reply_markup=reply_markup, parse_mode='Markdown')
     return SELECTING_PACKAGE
@@ -229,7 +236,11 @@ def main() -> None:
         states={
             SELECTING_SERVICE: [CallbackQueryHandler(select_service, pattern=r'^service_.*$')],
             AWAITING_CONTRACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_contract)],
-            SELECTING_PACKAGE: [CallbackQueryHandler(select_package, pattern=r'^pkg_.*$')],
+            SELECTING_PACKAGE: [
+                CallbackQueryHandler(select_package, pattern=r'^pkg_.*$'),
+                # ADDED: Handler for the new back button
+                CallbackQueryHandler(start, pattern=r'^back_to_services$')
+            ],
             AWAITING_PAYMENT: [CallbackQueryHandler(process_payment, pattern=r'^confirm_payment$')],
         },
         fallbacks=[CommandHandler('cancel', cancel), CallbackQueryHandler(cancel)],
