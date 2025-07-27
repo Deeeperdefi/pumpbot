@@ -40,6 +40,7 @@ PAYMENT_AMOUNTS = {
     'option_3': 3.0 * 1e9,
     'option_4': 3.8 * 1e9,
     'option_5': 6.0 * 1e9,
+    'option_test': 0.01 * 1e9, # ADDED: New test payment option for 0.01 SOL
 }
 
 async def verify_payment(expected_amount_lamports: int) -> bool:
@@ -50,7 +51,7 @@ async def verify_payment(expected_amount_lamports: int) -> bool:
     try:
         solana_client = Client(SOLANA_RPC_URL)
         # Get the most recent transaction signatures for the deposit address
-        signatures = solana_client.get_signatures_for_address(DEPOSIT_PUBKEY, limit=10).value
+        signatures = solana_client.get_signatures_for_address(DEPOSIT_PUBKEY, limit=15).value
         
         if not signatures:
             logger.info("No recent transactions found for the address.")
@@ -72,7 +73,8 @@ async def verify_payment(expected_amount_lamports: int) -> bool:
                     balance_before = pre_balances[deposit_account_index]
                     balance_after = post_balances[deposit_account_index]
                     
-                    if balance_after - balance_before == expected_amount_lamports:
+                    # Use a small tolerance for floating point inaccuracies
+                    if abs((balance_after - balance_before) - expected_amount_lamports) < 1000:
                         logger.info(f"Payment verified! Signature: {sig_info.signature}")
                         return True
                 except ValueError:
@@ -114,6 +116,7 @@ async def show_payment_options(update: Update, context: CallbackContext) -> int:
         [InlineKeyboardButton("🌟 700 Holders (3.0 SOL)", callback_data='option_3')],
         [InlineKeyboardButton("🔥 1000 Holders (3.8 SOL)", callback_data='option_4')],
         [InlineKeyboardButton("💎 DexScreener/Pump.fun Feature (6.0 SOL)", callback_data='option_5')],
+        [InlineKeyboardButton("🧪 Test Payment (0.01 SOL)", callback_data='option_test')], # ADDED: New button for testing
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = "Please choose a package to increase your token holders:"
@@ -132,7 +135,8 @@ async def handle_payment_choice(update: Update, context: CallbackContext) -> int
         'option_2': "🚀 400 Holders for 1.8 SOL",
         'option_3': "🌟 700 Holders for 3.0 SOL",
         'option_4': "🔥 1000 Holders for 3.8 SOL",
-        'option_5': "💎 DexScreener/Pump.fun Feature for 6.0 SOL"
+        'option_5': "💎 DexScreener/Pump.fun Feature for 6.0 SOL",
+        'option_test': "🧪 Test Payment (0.01 SOL)", # ADDED: Text for the test option
     }
     chosen_plan_text = options_details.get(query.data, "the selected plan")
     deposit_message = (
@@ -153,7 +157,8 @@ async def prompt_for_verification(update: Update, context: CallbackContext) -> i
     """
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="⏳ Verifying your payment on the blockchain, please wait...")
+    # UPDATED: Clearer message that sets expectations.
+    await query.edit_message_text(text="⏳ Verifying your payment on the blockchain. This may take up to a minute, please wait...")
 
     chosen_option = context.user_data.get('chosen_option')
     expected_amount = PAYMENT_AMOUNTS.get(chosen_option)
@@ -162,10 +167,10 @@ async def prompt_for_verification(update: Update, context: CallbackContext) -> i
         await query.message.reply_text("Error: Could not determine payment amount. Please /start again.")
         return ConversationHandler.END
 
-    # Check for payment for up to 2 minutes (12 checks, 10 seconds apart)
+    # UPDATED: Check for payment for up to 60 seconds (6 checks, 10 seconds apart)
     payment_found = False
-    for i in range(12):
-        if await verify_payment(expected_amount):
+    for i in range(6):
+        if await verify_payment(int(expected_amount)):
             payment_found = True
             break
         await asyncio.sleep(10) # Wait before checking again
@@ -176,8 +181,9 @@ async def prompt_for_verification(update: Update, context: CallbackContext) -> i
             "Your holder increase is now being processed."
         )
     else:
+        # UPDATED: Failure message reflects the shorter wait time.
         await query.message.reply_text(
-            "❌ We could not find your payment on the blockchain after 2 minutes.\n\n"
+            "❌ We could not find your payment on the blockchain after 1 minute.\n\n"
             "Please ensure you sent the correct amount and try again later, or contact support. You can /start a new request."
         )
         
@@ -205,3 +211,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
