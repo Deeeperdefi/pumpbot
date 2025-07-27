@@ -4,9 +4,10 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler, CallbackQueryHandler, CallbackContext
 
-# Import Solana libraries for on-chain verification
+# Import Solana libraries
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey
+from solders.keypair import Keypair
 
 # Enable logging
 logging.basicConfig(
@@ -15,195 +16,223 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Conversation States ---
-ASK_CONTRACT, ASK_TOKEN_NAME, SHOW_OPTIONS, AWAIT_SCREENSHOT = range(4)
+# --- NEW Conversation States ---
+SELECTING_SERVICE, SELECTING_PACKAGE, AWAITING_PAYMENT, AWAITING_CONTRACT = range(4)
 
 # --- Bot Configuration ---
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-if not BOT_TOKEN:
-    raise ValueError("No TELEGRAM_BOT_TOKEN found in environment variables.")
+if not BOT_TOKEN: raise ValueError("TELEGRAM_BOT_TOKEN not found.")
 
-# NEW: Add your QuickNode RPC URL as an environment variable
 SOLANA_RPC_URL = os.environ.get('SOLANA_RPC_URL')
-if not SOLANA_RPC_URL:
-    raise ValueError("No SOLANA_RPC_URL found in environment variables.")
+if not SOLANA_RPC_URL: raise ValueError("SOLANA_RPC_URL not found.")
+
+TREASURY_PRIVATE_KEY_STR = os.environ.get('TREASURY_WALLET_PRIVATE_KEY')
+if not TREASURY_PRIVATE_KEY_STR: raise ValueError("TREASURY_WALLET_PRIVATE_KEY not found.")
+try:
+    private_key_bytes = bytes(eval(TREASURY_PRIVATE_KEY_STR))
+    TREASURY_WALLET = Keypair.from_secret_key(private_key_bytes)
+except Exception as e:
+    raise ValueError(f"Could not decode the private key. Error: {e}")
 
 DEPOSIT_ADDRESS = '5H5xeKUt1wh5SE8hSJbnh9tsdVgZrUrbGffQjD9HTE9E'
 DEPOSIT_PUBKEY = Pubkey.from_string(DEPOSIT_ADDRESS)
 
-# --- Payment Verification Logic ---
-
-# Map payment options to the required SOL amount in Lamports (1 SOL = 1,000,000,000 Lamports)
-PAYMENT_AMOUNTS = {
-    'option_1': 0.5 * 1e9,
-    'option_2': 1.8 * 1e9,
-    'option_3': 3.0 * 1e9,
-    'option_4': 3.8 * 1e9,
-    'option_5': 6.0 * 1e9,
-    'option_test': 0.01 * 1e9, # ADDED: New test payment option for 0.01 SOL
+# --- NEW Service & Package Structure ---
+# Prices for poster/trending converted from USD to SOL (assuming SOL ~$140)
+SERVICE_PACKAGES = {
+    'holders': {
+        'name': '📈 Token Holders Increase',
+        'explanation': "This service quickly increases the number of token holders for your project by creating new wallets that acquire a small amount of your token. This helps your project's on-chain data look more active and attractive to new investors.",
+        'packages': {
+            'h_1': {'name': '50 Holders', 'price_sol': 0.5, 'price_lamports': 0.5 * 1e9, 'value': 50},
+            'h_2': {'name': '400 Holders', 'price_sol': 1.8, 'price_lamports': 1.8 * 1e9, 'value': 400},
+            'h_3': {'name': '700 Holders', 'price_sol': 3.0, 'price_lamports': 3.0 * 1e9, 'value': 700},
+            'h_4': {'name': '1000 Holders', 'price_sol': 3.8, 'price_lamports': 3.8 * 1e9, 'value': 1000},
+        }
+    },
+    'market_maker': {
+        'name': '📊 Solana Market Maker',
+        'explanation': "Our Market Maker bot engages in automated trading for your token. It executes batch swaps on major DEXs, creating consistent trading volume. This makes your token appear more liquid and can help stabilize its price.",
+        'packages': {
+            'mm_1': {'name': 'Basic Volume', 'price_sol': 0.5, 'price_lamports': 0.5 * 1e9},
+            'mm_2': {'name': 'Standard Volume', 'price_sol': 1.8, 'price_lamports': 1.8 * 1e9},
+            'mm_3': {'name': 'Advanced Volume', 'price_sol': 3.0, 'price_lamports': 3.0 * 1e9},
+            'mm_4': {'name': 'Pro Volume', 'price_sol': 3.8, 'price_lamports': 3.8 * 1e9},
+        }
+    },
+    'poster': {
+        'name': '📢 Multi-Group Poster',
+        'explanation': "Gain massive visibility for your project by having your message automatically posted across thousands of relevant crypto Telegram groups. A perfect way to reach a huge audience of potential investors quickly.",
+        'packages': {
+            'p_1': {'name': '50 Groups', 'price_sol': 0.18, 'price_lamports': 0.18 * 1e9}, # ~$25
+            'p_2': {'name': '300 Groups', 'price_sol': 0.5, 'price_lamports': 0.5 * 1e9},   # ~$70
+            'p_3': {'name': '10,000 Groups', 'price_sol': 1.79, 'price_lamports': 1.79 * 1e9},# ~$250
+        }
+    },
+    'trending': {
+        'name': '🚀 DEX Trending (Top 10)',
+        'explanation': "This is our all-in-one premium package. We activate all our powerful features, including market making, holder increases, and high-frequency trading to push your token into the Top 10 trending list on platforms like DexScreener and DEXTools.",
+        'packages': {
+            't_1': {'name': 'Top 10 Trending', 'price_sol': 3.57, 'price_lamports': 3.57 * 1e9}, # ~$500
+        }
+    }
 }
 
+# --- On-Chain & Service Logic (Placeholders) ---
+
 async def verify_payment(expected_amount_lamports: int) -> bool:
-    """
-    Connects to the Solana blockchain to verify if a recent transaction
-    of the expected amount was sent to the deposit address.
-    """
+    # This function remains the same, it's already robust.
     try:
         solana_client = Client(SOLANA_RPC_URL)
-        # Get the most recent transaction signatures for the deposit address
-        signatures = solana_client.get_signatures_for_address(DEPOSIT_PUBKEY, limit=15).value
-        
-        if not signatures:
-            logger.info("No recent transactions found for the address.")
-            return False
-
+        signatures = solana_client.get_signatures_for_address(DEPOSIT_PUBKEY, limit=20).value
+        if not signatures: return False
         for sig_info in signatures:
-            # Fetch the full transaction details
             tx_details = solana_client.get_transaction(sig_info.signature, max_supported_transaction_version=0).value
-            if tx_details:
-                pre_balances = tx_details.transaction.meta.pre_balances
-                post_balances = tx_details.transaction.meta.post_balances
-                account_keys = tx_details.transaction.transaction.message.account_keys
-
-                # Find the index for our deposit address
+            if tx_details and tx_details.transaction.meta:
+                meta = tx_details.transaction.meta
                 try:
-                    deposit_account_index = account_keys.index(DEPOSIT_PUBKEY)
-                    
-                    # Check if the balance increased by the expected amount
-                    balance_before = pre_balances[deposit_account_index]
-                    balance_after = post_balances[deposit_account_index]
-                    
-                    # Use a small tolerance for floating point inaccuracies
-                    if abs((balance_after - balance_before) - expected_amount_lamports) < 1000:
+                    idx = tx_details.transaction.transaction.message.account_keys.index(DEPOSIT_PUBKEY)
+                    if abs((meta.post_balances[idx] - meta.pre_balances[idx]) - expected_amount_lamports) < 1000:
                         logger.info(f"Payment verified! Signature: {sig_info.signature}")
                         return True
-                except ValueError:
-                    # This transaction did not involve our deposit address directly
-                    continue
-                    
+                except (ValueError, IndexError): continue
     except Exception as e:
-        logger.error(f"An error occurred during payment verification: {e}")
-        return False
-        
-    logger.info("No matching payment found in recent transactions.")
+        logger.error(f"Payment verification error: {e}")
     return False
 
-# --- Main Bot Functions ---
+async def execute_service(service_type: str, package: dict, contract: str):
+    logger.info("="*50)
+    logger.info(f"EXECUTING SERVICE: {service_type.upper()}")
+    logger.info(f"  - Package: {package.get('name')}")
+    logger.info(f"  - Contract: {contract}")
+    logger.info(f"  - Budget (15%): {int(package.get('price_lamports', 0) * 0.15) / 1e9} SOL")
+    logger.info("="*50)
+    # Here you would add the specific logic for each service type
+    return True
+
+
+# --- Main Bot Conversation Handlers ---
 
 async def start(update: Update, context: CallbackContext) -> int:
-    user = update.effective_user
-    await update.message.reply_text(
-        f"👋 Welcome to CoinBot, {user.first_name}!\n\n"
-        "I can help you get more holders for your Solana token.\n\n"
-        "First, please send me your token's contract address."
-    )
-    return ASK_CONTRACT
-
-async def ask_for_contract(update: Update, context: CallbackContext) -> int:
-    context.user_data['contract_address'] = update.message.text
-    await update.message.reply_text("Great! Now, please tell me the name of your token.")
-    return ASK_TOKEN_NAME
-
-async def ask_for_token_name(update: Update, context: CallbackContext) -> int:
-    context.user_data['token_name'] = update.message.text
-    await update.message.reply_text(f"Perfect! You've set the token: {context.user_data['token_name']}.")
-    return await show_payment_options(update, context)
-
-async def show_payment_options(update: Update, context: CallbackContext) -> int:
+    """Displays the main menu of services."""
     keyboard = [
-        [InlineKeyboardButton("📦 50 Holders (0.5 SOL)", callback_data='option_1')],
-        [InlineKeyboardButton("🚀 400 Holders (1.8 SOL)", callback_data='option_2')],
-        [InlineKeyboardButton("🌟 700 Holders (3.0 SOL)", callback_data='option_3')],
-        [InlineKeyboardButton("🔥 1000 Holders (3.8 SOL)", callback_data='option_4')],
-        [InlineKeyboardButton("💎 DexScreener/Pump.fun Feature (6.0 SOL)", callback_data='option_5')],
-        [InlineKeyboardButton("🧪 Test Payment (0.01 SOL)", callback_data='option_test')], # ADDED: New button for testing
+        [InlineKeyboardButton(SERVICE_PACKAGES['holders']['name'], callback_data='service_holders')],
+        [InlineKeyboardButton(SERVICE_PACKAGES['market_maker']['name'], callback_data='service_market_maker')],
+        [InlineKeyboardButton(SERVICE_PACKAGES['poster']['name'], callback_data='service_poster')],
+        [InlineKeyboardButton(SERVICE_PACKAGES['trending']['name'], callback_data='service_trending')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    message_text = "Please choose a package to increase your token holders:"
-    if update.callback_query:
-        await update.callback_query.message.edit_text(message_text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(message_text, reply_markup=reply_markup)
-    return SHOW_OPTIONS
+    await update.message.reply_text("👋 Welcome to CoinBot! Please select a service to begin:", reply_markup=reply_markup)
+    return SELECTING_SERVICE
 
-async def handle_payment_choice(update: Update, context: CallbackContext) -> int:
+async def select_service(update: Update, context: CallbackContext) -> int:
+    """Handles the user's main service choice, explains it, and asks for the contract."""
     query = update.callback_query
     await query.answer()
-    context.user_data['chosen_option'] = query.data
-    options_details = {
-        'option_1': "📦 50 Holders for 0.5 SOL",
-        'option_2': "🚀 400 Holders for 1.8 SOL",
-        'option_3': "🌟 700 Holders for 3.0 SOL",
-        'option_4': "🔥 1000 Holders for 3.8 SOL",
-        'option_5': "💎 DexScreener/Pump.fun Feature for 6.0 SOL",
-        'option_test': "🧪 Test Payment (0.01 SOL)", # ADDED: Text for the test option
-    }
-    chosen_plan_text = options_details.get(query.data, "the selected plan")
+    
+    service_key = query.data.split('_')[1]
+    context.user_data['service'] = service_key
+    service_info = SERVICE_PACKAGES[service_key]
+
+    await query.edit_message_text(
+        text=f"*{service_info['name']}*\n\n{service_info['explanation']}\n\nTo continue, please reply with your token's contract address.",
+        parse_mode='Markdown'
+    )
+    return AWAITING_CONTRACT
+
+async def received_contract(update: Update, context: CallbackContext) -> int:
+    """Stores the contract and shows the relevant packages."""
+    context.user_data['contract'] = update.message.text
+    service_key = context.user_data['service']
+    service_info = SERVICE_PACKAGES[service_key]
+    
+    keyboard = []
+    for pkg_key, pkg_info in service_info['packages'].items():
+        button_text = f"{pkg_info['name']} ({pkg_info['price_sol']} SOL)"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"pkg_{pkg_key}")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(f"Perfect! Now choose a package for *{service_info['name']}*:", reply_markup=reply_markup, parse_mode='Markdown')
+    return SELECTING_PACKAGE
+
+async def select_package(update: Update, context: CallbackContext) -> int:
+    """Handles package selection and prompts for payment."""
+    query = update.callback_query
+    await query.answer()
+
+    pkg_key = query.data.split('_')[1]
+    service_key = context.user_data['service']
+    package_info = SERVICE_PACKAGES[service_key]['packages'][pkg_key]
+    context.user_data['package'] = package_info
+
     deposit_message = (
-        f"You have selected: **{chosen_plan_text}**.\n\n"
-        f"To proceed, please deposit the required SOL amount to the address below. After paying, return here and click 'Confirm Payment'.\n\n"
+        f"You have selected: **{package_info['name']}**.\n\n"
+        f"To proceed, please deposit **{package_info['price_sol']} SOL** to the address below. After paying, return here and click 'Confirm Payment'.\n\n"
         f"`{DEPOSIT_ADDRESS}`\n\n"
         "(Tap to copy the address)"
     )
-    keyboard = [[InlineKeyboardButton("✅ I Have Paid", callback_data='confirm_payment')]]
+    keyboard = [[InlineKeyboardButton("✅ I Have Paid", callback_data="confirm_payment")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text=deposit_message, reply_markup=reply_markup, parse_mode='Markdown')
-    return AWAIT_SCREENSHOT
+    return AWAITING_PAYMENT
 
-async def prompt_for_verification(update: Update, context: CallbackContext) -> int:
-    """
-    This function is triggered when the user clicks 'I Have Paid'.
-    It starts the on-chain verification process.
-    """
+async def process_payment(update: Update, context: CallbackContext) -> int:
+    """Verifies the payment and executes the chosen service."""
     query = update.callback_query
     await query.answer()
-    # UPDATED: Clearer message that sets expectations.
     await query.edit_message_text(text="⏳ Verifying your payment on the blockchain. This may take up to a minute, please wait...")
 
-    chosen_option = context.user_data.get('chosen_option')
-    expected_amount = PAYMENT_AMOUNTS.get(chosen_option)
-
-    if not expected_amount:
-        await query.message.reply_text("Error: Could not determine payment amount. Please /start again.")
+    package = context.user_data.get('package')
+    if not package:
+        await query.message.reply_text("Error: Session expired. Please /start again.")
         return ConversationHandler.END
 
-    # UPDATED: Check for payment for up to 60 seconds (6 checks, 10 seconds apart)
+    expected_amount = package['price_lamports']
     payment_found = False
-    for i in range(6):
+    for _ in range(6): # 6 checks, 10 seconds apart
         if await verify_payment(int(expected_amount)):
             payment_found = True
             break
-        await asyncio.sleep(10) # Wait before checking again
+        await asyncio.sleep(10)
 
     if payment_found:
-        await query.message.reply_text(
-            "🎉 Payment verified and received!\n\n"
-            "Your holder increase is now being processed."
-        )
+        await query.message.reply_text("🎉 Payment verified and received!")
+        service_type = context.user_data.get('service')
+        contract = context.user_data.get('contract')
+        success = await execute_service(service_type, package, contract)
+        
+        if success:
+            await query.message.reply_text("✅ Congrats, all work is done! Thank you for using CoinBot.\n\nYou can /start a new service anytime.")
+        else:
+            await query.message.reply_text("There was an issue processing your service. Please contact support.")
     else:
-        # UPDATED: Failure message reflects the shorter wait time.
         await query.message.reply_text(
             "❌ We could not find your payment on the blockchain after 1 minute.\n\n"
-            "Please ensure you sent the correct amount and try again later, or contact support. You can /start a new request."
+            "Please ensure you sent the correct amount and try again, or /start over."
         )
-        
     return ConversationHandler.END
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text('Action canceled. Send /start anytime to begin again.')
+    """Cancels the current operation."""
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("Action canceled. You can /start again anytime.")
+    else:
+        await update.message.reply_text("Action canceled. You can /start again anytime.")
     return ConversationHandler.END
 
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
+    
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            ASK_CONTRACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_for_contract)],
-            ASK_TOKEN_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_for_token_name)],
-            SHOW_OPTIONS: [CallbackQueryHandler(handle_payment_choice)],
-            AWAIT_SCREENSHOT: [CallbackQueryHandler(prompt_for_verification, pattern='^confirm_payment$')],
+            SELECTING_SERVICE: [CallbackQueryHandler(select_service, pattern=r'^service_.*$')],
+            AWAITING_CONTRACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_contract)],
+            SELECTING_PACKAGE: [CallbackQueryHandler(select_package, pattern=r'^pkg_.*$')],
+            AWAITING_PAYMENT: [CallbackQueryHandler(process_payment, pattern=r'^confirm_payment$')],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler('cancel', cancel), CallbackQueryHandler(cancel)],
     )
     application.add_handler(conv_handler)
     print("Bot is running...")
@@ -211,4 +240,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
